@@ -1,0 +1,17 @@
+#!/bin/bash
+set -e
+
+PROJECT_DIR="/home/khanhpi/project/tree_ai"
+VENV="$PROJECT_DIR/venv"
+
+echo "Starting Tree AI..."
+
+cd "$PROJECT_DIR"
+
+# Activate venv
+source "$VENV/bin/activate"
+
+# Run main app (DOexec python -m src.main
+
+
+
