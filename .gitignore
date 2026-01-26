@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Virtual environment
+venv/
+
+# Firebase secrets
+firebase_key.json
+
+# Logs
+*.log
+
+# Detection outputs
+detections/
+snapshots/
+
+# OS
+.DS_Store
