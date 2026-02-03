@@ -1,4 +1,3 @@
-# src/services/firebase_service.py
 import os
 from datetime import datetime
 import firebase_admin

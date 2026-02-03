@@ -1,4 +1,4 @@
-# src/ai/detector.py
+
 from ultralytics import YOLO
 import time
 
