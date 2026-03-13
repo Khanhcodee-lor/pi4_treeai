@@ -1,28 +1,31 @@
 # src/utils/config.py
-# Chỉnh các giá trị phù hợp với hệ thống bạn
 
 MODEL_PATH = "models/best.pt"
 CONF = 0.5
 
-# camera/stream resolution
+# Camera resolution
 WIDTH = 416
 HEIGHT = 416
 
-# detect interval (s) để không detect mỗi frame
+# Detector throttling for optional live mode helpers
 DETECT_INTERVAL = 0.8
 
-# tránh spam firebase: tối thiểu giây giữa 2 lần gửi cùng label
-SEND_COOLDOWN = 30
+# Firebase capture polling interval
+COMMAND_POLL_INTERVAL = 1.0
 
-# nơi lưu snapshot local
+# Local snapshot directory
 SNAPSHOT_DIR = "detections/snapshots"
 
-# Firebase config: chỉnh path và URL của bạn
-FIREBASE_KEY_PATH = "/home/khanhpi/project/tree_ai/firebase_key.json"  # đặt file JSON ở đây
+# Firebase config
+FIREBASE_KEY_PATH = "/home/khanhpi/project/tree_ai/firebase_key.json"
 FIREBASE_DB_URL = "https://pi4-iot-1b7bb-default-rtdb.asia-southeast1.firebasedatabase.app/"
-
-# nếu muốn upload snapshot lên Firebase Storage, đặt tên bucket (optional)
 FIREBASE_STORAGE_BUCKET = "pi4-iot-1b7bb.firebasestorage.app"
+FIREBASE_UPLOAD_TO_STORAGE = True
 
-# logging / debug
+# Firebase RTDB paths
+CAPTURE_COMMAND_PATH = "commands/capture"
+CAPTURE_RESULT_LATEST_PATH = "detections/latest"
+CAPTURE_RESULT_HISTORY_PATH = "detections/history"
+
+# Logging / debug
 VERBOSE = True
