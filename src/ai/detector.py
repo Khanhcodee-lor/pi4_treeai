@@ -3,6 +3,8 @@ import cv2
 import requests
 import numpy as np
 
+from src.utils.config import JPEG_QUALITY
+
 
 class RemoteDetector:
     """Simple HTTP client to send frames to detection server"""
@@ -38,7 +40,7 @@ class RemoteDetector:
     
     def _frame_to_base64(self, frame):
         """Convert frame to base64"""
-        _, buffer = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 85])
+        _, buffer = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, JPEG_QUALITY])
         return base64.b64encode(buffer).decode("utf-8")
     
     def send_frame(self, frame):
@@ -50,7 +52,8 @@ class RemoteDetector:
         """
         try:
             frame_b64 = self._frame_to_base64(frame)
-            payload = {"image": frame_b64, "conf": self.conf}
+            # Some server variants expect `frame`, others expect `image`.
+            payload = {"frame": frame_b64, "image": frame_b64, "conf": self.conf}
             
             resp = requests.post(self.detect_url, json=payload, timeout=5)
             resp.raise_for_status()

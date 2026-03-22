@@ -17,38 +17,78 @@ def ensure_snapshot_dir():
 
 
 def sharpen_image(frame, kernel_size=5):
-    """Sharpen image using kernel"""
-    kernel = np.array([[-1, -1, -1],
-                       [-1,  9, -1],
-                       [-1, -1, -1]])
-    
-    # Apply sharpening
-    sharpened = cv2.filter2D(frame, -1, kernel)
-    
-    # Blend with original (reduce over-sharpening)
-    alpha = 0.7
-    result = cv2.addWeighted(frame, 1 - alpha, sharpened, alpha, 0)
-    return result
+    """Apply a gentle unsharp mask to avoid harsh, artificial edges."""
+    amount = max(0.0, SHARPEN_AMOUNT)
+    if amount <= 0:
+        return frame
+
+    blurred = cv2.GaussianBlur(frame, (0, 0), 1.0)
+    return cv2.addWeighted(frame, 1.0 + amount, blurred, -amount, 0)
+
+
+def apply_gray_world_white_balance(frame):
+    """Reduce color cast by normalizing channel means (Gray-World AWB)."""
+    img = frame.astype(np.float32)
+    mean_b = float(np.mean(img[:, :, 0]))
+    mean_g = float(np.mean(img[:, :, 1]))
+    mean_r = float(np.mean(img[:, :, 2]))
+    mean_gray = (mean_b + mean_g + mean_r) / 3.0
+
+    eps = 1e-6
+    img[:, :, 0] *= mean_gray / (mean_b + eps)
+    img[:, :, 1] *= mean_gray / (mean_g + eps)
+    img[:, :, 2] *= mean_gray / (mean_r + eps)
+    return np.clip(img, 0, 255).astype(np.uint8)
+
+
+def adjust_gamma(frame, gamma=1.0):
+    """Gamma correction to recover details in low-light frames."""
+    gamma = max(0.1, float(gamma))
+    if abs(gamma - 1.0) < 1e-3:
+        return frame
+
+    inv_gamma = 1.0 / gamma
+    table = np.array([((i / 255.0) ** inv_gamma) * 255 for i in range(256)]).astype("uint8")
+    return cv2.LUT(frame, table)
+
+
+def adjust_saturation(frame, gain=1.0):
+    """Slightly boost saturation so leaf color is easier to distinguish."""
+    if abs(gain - 1.0) < 1e-3:
+        return frame
+
+    hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV).astype(np.float32)
+    hsv[:, :, 1] *= float(gain)
+    hsv[:, :, 1] = np.clip(hsv[:, :, 1], 0, 255)
+    return cv2.cvtColor(hsv.astype(np.uint8), cv2.COLOR_HSV2BGR)
 
 
 def preprocess_frame(frame):
-    """Preprocess frame: resize, sharpen"""
+    """Preprocess frame for stable quality before sending to server."""
     # Resize to target dimensions
     frame = cv2.resize(frame, (WIDTH, HEIGHT))
-    
-    # Sharpen
-    frame = sharpen_image(frame, BLUR_KERNEL)
+
+    if ENABLE_COLOR_CORRECTION:
+        if AUTO_WHITE_BALANCE:
+            frame = apply_gray_world_white_balance(frame)
+        frame = adjust_gamma(frame, GAMMA)
+        frame = adjust_saturation(frame, SATURATION_GAIN)
+
+    if ENABLE_SHARPEN:
+        frame = sharpen_image(frame)
     
     return frame
 
 
 def draw_detections(frame, detections):
     """Draw detection boxes on frame"""
-    if not detections:
+    if not isinstance(detections, list) or not detections:
         return frame
     
     annotated = frame.copy()
     for det in detections:
+        if not isinstance(det, dict) or "box" not in det:
+            continue
         x1 = det["box"]["x1"]
         y1 = det["box"]["y1"]
         x2 = det["box"]["x2"]
@@ -78,7 +118,7 @@ def save_snapshot(frame, detections=None):
         else:
             filename = f"{SNAPSHOT_DIR}/{timestamp}_nodet.jpg"
         
-        cv2.imwrite(filename, frame)
+        cv2.imwrite(filename, frame, [cv2.IMWRITE_JPEG_QUALITY, JPEG_QUALITY])
         return filename
     except Exception as e:
         print(f"    Snapshot save error: {e}")
@@ -149,6 +189,8 @@ def main():
                 detections = []
                 if result:
                     detections = result.get("detections", [])
+                    if not isinstance(detections, list):
+                        detections = []
                     count = result.get("count", 0)
                     print(f"✓ {count} detection(s)", end="")
                     

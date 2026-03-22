@@ -15,13 +15,19 @@ SERVER_URL = os.getenv("SERVER_URL", "http://192.168.1.100:5000")
 CONF = float(os.getenv("CONF", "0.5"))
 
 # Camera settings
-WIDTH = int(os.getenv("WIDTH", "416"))
-HEIGHT = int(os.getenv("HEIGHT", "416"))
+WIDTH = int(os.getenv("WIDTH", "640"))
+HEIGHT = int(os.getenv("HEIGHT", "480"))
 CAMERA_BACKEND = os.getenv("CAMERA_BACKEND", "auto")
 CAMERA_INDEX = int(os.getenv("CAMERA_INDEX", "0"))
 
 # Image preprocessing
-BLUR_KERNEL = int(os.getenv("BLUR_KERNEL", "5"))
+ENABLE_SHARPEN = os.getenv("ENABLE_SHARPEN", "false").lower() in ("1", "true", "yes")
+SHARPEN_AMOUNT = float(os.getenv("SHARPEN_AMOUNT", "0.2"))
+JPEG_QUALITY = int(os.getenv("JPEG_QUALITY", "95"))
+ENABLE_COLOR_CORRECTION = os.getenv("ENABLE_COLOR_CORRECTION", "true").lower() in ("1", "true", "yes")
+AUTO_WHITE_BALANCE = os.getenv("AUTO_WHITE_BALANCE", "true").lower() in ("1", "true", "yes")
+GAMMA = float(os.getenv("GAMMA", "1.15"))
+SATURATION_GAIN = float(os.getenv("SATURATION_GAIN", "1.05"))
 
 # Snapshot save (local storage)
 SAVE_SNAPSHOTS = os.getenv("SAVE_SNAPSHOTS", "true").lower() in ("1", "true", "yes")
