@@ -3,99 +3,194 @@ import time
 from datetime import datetime
 
 import cv2
+import numpy as np
 
-from src.ai.detector import DiseaseDetector
+from src.ai.detector import RemoteDetector
 from src.camera.camera_manager import CameraManager
-from src.services.firebase_service import FirebaseService
-from src.services.stream_service import build_disease_list, draw_boxes, extract_detections
+from src.services.firebase_command import FirebaseCommandListener
 from src.utils.config import *
 
 
 def ensure_snapshot_dir():
+    """Create snapshot directory if needed"""
     os.makedirs(SNAPSHOT_DIR, exist_ok=True)
 
 
-def sanitize_name(value):
-    return "".join(char if char.isalnum() or char in ("-", "_") else "_" for char in str(value))
+def sharpen_image(frame, kernel_size=5):
+    """Sharpen image using kernel"""
+    kernel = np.array([[-1, -1, -1],
+                       [-1,  9, -1],
+                       [-1, -1, -1]])
+    
+    # Apply sharpening
+    sharpened = cv2.filter2D(frame, -1, kernel)
+    
+    # Blend with original (reduce over-sharpening)
+    alpha = 0.7
+    result = cv2.addWeighted(frame, 1 - alpha, sharpened, alpha, 0)
+    return result
 
 
-def wait_for_frame(camera, timeout=3):
-    deadline = time.time() + timeout
-    while time.time() < deadline:
-        frame = camera.get_frame()
-        if frame is not None:
-            return frame
-        time.sleep(0.05)
-    return None
+def preprocess_frame(frame):
+    """Preprocess frame: resize, sharpen"""
+    # Resize to target dimensions
+    frame = cv2.resize(frame, (WIDTH, HEIGHT))
+    
+    # Sharpen
+    frame = sharpen_image(frame, BLUR_KERNEL)
+    
+    return frame
+
+
+def draw_detections(frame, detections):
+    """Draw detection boxes on frame"""
+    if not detections:
+        return frame
+    
+    annotated = frame.copy()
+    for det in detections:
+        x1 = det["box"]["x1"]
+        y1 = det["box"]["y1"]
+        x2 = det["box"]["x2"]
+        y2 = det["box"]["y2"]
+        label = f"{det['label']} {det['confidence']:.2f}"
+        
+        # Draw box
+        cv2.rectangle(annotated, (x1, y1), (x2, y2), (0, 255, 0), 2)
+        
+        # Draw label
+        cv2.putText(annotated, label, (x1, y1 - 5),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
+    
+    return annotated
+
+
+def save_snapshot(frame, detections=None):
+    """Save snapshot locally"""
+    try:
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S%f")[:-3]
+        
+        # Annotate if detections exist
+        if detections:
+            frame = draw_detections(frame, detections)
+            count = len(detections)
+            filename = f"{SNAPSHOT_DIR}/{timestamp}_{count}det.jpg"
+        else:
+            filename = f"{SNAPSHOT_DIR}/{timestamp}_nodet.jpg"
+        
+        cv2.imwrite(filename, frame)
+        return filename
+    except Exception as e:
+        print(f"    Snapshot save error: {e}")
+        return None
 
 
 def main():
-    print("Starting Tree AI system...")
-    ensure_snapshot_dir()
-
-    camera = CameraManager(
-        WIDTH,
-        HEIGHT,
-        backend=CAMERA_BACKEND,
-        camera_index=CAMERA_INDEX,
-    )
-    detector = DiseaseDetector(MODEL_PATH, conf=CONF, interval=DETECT_INTERVAL)
-    fb = FirebaseService(
-        FIREBASE_KEY_PATH,
-        FIREBASE_DB_URL,
-        storage_bucket=FIREBASE_STORAGE_BUCKET if FIREBASE_STORAGE_BUCKET else None,
-        command_path=CAPTURE_COMMAND_PATH,
-        result_latest_path=CAPTURE_RESULT_LATEST_PATH,
-        result_history_path=CAPTURE_RESULT_HISTORY_PATH,
-    )
-
-    print("System ready. Waiting for Firebase capture commands...")
-
+    print("=" * 60)
+    print("Pi Camera Capture Agent (Firebase Command Mode)")
+    print("=" * 60)
+    
+    if SAVE_SNAPSHOTS:
+        ensure_snapshot_dir()
+        print(f"📁 Snapshots: {SNAPSHOT_DIR}")
+    
+    camera = CameraManager(WIDTH, HEIGHT, backend=CAMERA_BACKEND, camera_index=CAMERA_INDEX)
+    detector = RemoteDetector(server_url=SERVER_URL, conf=CONF)
+    fb = FirebaseCommandListener(db_url=FIREBASE_DB_URL, device_id=DEVICE_ID)
+    
+    print(f"📷 Camera: {WIDTH}x{HEIGHT} @ {CAMERA_BACKEND}")
+    print(f"🌐 Server: {SERVER_URL}")
+    print(f"⏱️  Poll interval: {COMMAND_POLL_INTERVAL}s")
+    print("=" * 60)
+    print("Waiting for Firebase commands...\n")
+    
     try:
+        capture_count = 0
+        start_time = time.time()
+        
         while True:
-            command = fb.get_capture_command()
-            if not command:
-                time.sleep(COMMAND_POLL_INTERVAL)
-                continue
+            # Poll Firebase for command
+            command = fb.get_command()
+            
+            if command:
+                capture_count += 1
+                request_id = command.get("request_id", f"capture_{capture_count}")
+                timestamp = datetime.now().strftime("%H:%M:%S")
+                
+                print(f"[{capture_count:04d}] {timestamp} | CMD: {request_id}")
+                
+                # Update status
+                fb.update_status("processing", request_id)
+                
+                # Get fresh frame
+                for _ in range(10):  # Try 10 times with 100ms delay
+                    frame = camera.get_frame()
+                    if frame is not None:
+                        break
+                    time.sleep(0.1)
 
-            request_id = command["request_id"]
-            print(f"Capture requested: {request_id}")
-
-            try:
-                fb.update_capture_status("processing", request_id=request_id)
-
-                frame = wait_for_frame(camera)
+                captured_at_epoch = time.time()
+                captured_at_iso = datetime.now().isoformat(timespec="seconds")
+                
                 if frame is None:
-                    raise RuntimeError("Camera frame unavailable")
-
-                results = detector.detect(frame)
-                detections = extract_detections(results)
-                diseases = build_disease_list(detections)
-                annotated_frame = draw_boxes(frame.copy(), results)
-
-                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                disease_tag = sanitize_name(diseases[0] if diseases else "healthy")
-                safe_request_id = sanitize_name(request_id)
-                snapshot_path = f"{SNAPSHOT_DIR}/{timestamp}_{safe_request_id}_{disease_tag}.jpg"
-
-                if not cv2.imwrite(snapshot_path, annotated_frame):
-                    raise RuntimeError(f"Failed to write snapshot to {snapshot_path}")
-
-                payload = fb.push_capture_result(
-                    request_id=request_id,
-                    detections=detections,
-                    diseases=diseases,
-                    snapshot_local_path=snapshot_path,
-                    upload_to_storage=command.get("upload_to_storage", FIREBASE_UPLOAD_TO_STORAGE),
+                    print("        ✗ Camera error")
+                    fb.update_status("error", request_id)
+                    fb.acknowledge_command(request_id=request_id, captured_at=None)
+                    time.sleep(COMMAND_POLL_INTERVAL)
+                    continue
+                
+                # Preprocess
+                processed = preprocess_frame(frame)
+                
+                # Send to server
+                print(f"        → ", end="", flush=True)
+                result = detector.send_frame(processed)
+                
+                detections = []
+                if result:
+                    detections = result.get("detections", [])
+                    count = result.get("count", 0)
+                    print(f"✓ {count} detection(s)", end="")
+                    
+                    if count > 0 and VERBOSE:
+                        print()
+                        for det in detections:
+                            label = det["label"]
+                            conf = det["confidence"]
+                            print(f"             └─ {label}: {conf:.2f}")
+                    else:
+                        print()
+                else:
+                    print("✗ Server error")
+                
+                # Save local snapshot
+                if SAVE_SNAPSHOTS:
+                    snapshot = save_snapshot(processed, detections if detections else None)
+                    if snapshot and VERBOSE:
+                        print(f"             📸 {os.path.basename(snapshot)}")
+                
+                # Update Firebase completion
+                fb.update_status(
+                    "completed",
+                    request_id,
+                    extra={
+                        "captured_at": captured_at_iso,
+                        "captured_at_unix": captured_at_epoch,
+                        "detection_count": len(detections),
+                    },
                 )
-                fb.complete_capture_command(request_id, result=payload)
-                print(f"Capture processed: {request_id}, diseases={diseases}")
-            except Exception as e:
-                print("Capture processing error:", e)
-                fb.fail_capture_command(request_id, e)
-
+                fb.acknowledge_command(request_id=request_id, captured_at=captured_at_iso)
+                print(f"        ✓ Done\n")
+            
+            # Wait before next poll
+            time.sleep(COMMAND_POLL_INTERVAL)
+            
     except KeyboardInterrupt:
-        print("Stopping...")
+        elapsed = time.time() - start_time
+        print()
+        print("=" * 60)
+        print(f"Stopped. Captures: {capture_count} | Time: {elapsed:.1f}s")
+        print("=" * 60)
     finally:
         camera.stop()
 
