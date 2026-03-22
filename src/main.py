@@ -33,7 +33,12 @@ def main():
     print("Starting Tree AI system...")
     ensure_snapshot_dir()
 
-    camera = CameraManager(WIDTH, HEIGHT)
+    camera = CameraManager(
+        WIDTH,
+        HEIGHT,
+        backend=CAMERA_BACKEND,
+        camera_index=CAMERA_INDEX,
+    )
     detector = DiseaseDetector(MODEL_PATH, conf=CONF, interval=DETECT_INTERVAL)
     fb = FirebaseService(
         FIREBASE_KEY_PATH,
