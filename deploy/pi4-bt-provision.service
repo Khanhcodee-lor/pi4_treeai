@@ -1,0 +1,20 @@
+[Unit]
+Description=Pi4 Bluetooth Wi-Fi Provisioning Service
+After=bluetooth.service network-online.target
+Wants=bluetooth.service network-online.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/home/khanhpi/project/pi4_treeai
+Environment=PYTHONUNBUFFERED=1
+Environment=BT_CHANNEL=4
+Environment=WIFI_INTERFACE=wlan0
+Environment=BT_DEVICE_NAME=khanhpi
+Environment=BT_AUTO_SETUP=true
+ExecStart=/home/khanhpi/project/pi4_treeai/run_bt_provision.sh
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

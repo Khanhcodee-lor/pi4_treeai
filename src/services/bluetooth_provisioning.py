@@ -1,5 +1,6 @@
 import json
 import socket
+import subprocess
 import time
 
 from src.services.wifi_manager import WiFiManager
@@ -8,12 +9,55 @@ from src.services.wifi_manager import WiFiManager
 class BluetoothProvisioningServer:
     """Bluetooth RFCOMM server for Wi-Fi provisioning from mobile apps."""
 
-    def __init__(self, channel=4, interface="wlan0", backlog=1):
+    def __init__(
+        self,
+        channel=4,
+        interface="wlan0",
+        backlog=1,
+        device_name="khanhpi",
+        auto_configure_adapter=True,
+    ):
         self.channel = int(channel)
         self.backlog = backlog
         self.wifi = WiFiManager(interface=interface)
+        self.device_name = (device_name or "khanhpi").strip() or "khanhpi"
+        self.auto_configure_adapter = bool(auto_configure_adapter)
         self.server = None
         self.running = False
+
+    def _configure_adapter(self):
+        """Ensure Bluetooth adapter is powered, renamed, and connectable."""
+        commands = [
+            "power on",
+            f"system-alias {self.device_name}",
+            "discoverable on",
+            "discoverable-timeout 0",
+            "pairable on",
+            "pairable-timeout 0",
+            "agent on",
+            "default-agent",
+            "show",
+            "quit",
+        ]
+
+        cmd = ["bluetoothctl"]
+        try:
+            proc = subprocess.run(
+                cmd,
+                input="\n".join(commands) + "\n",
+                capture_output=True,
+                text=True,
+                timeout=15,
+            )
+        except Exception as exc:
+            return {"ok": False, "error": str(exc)}
+
+        if proc.returncode != 0:
+            err = (proc.stderr or "").strip()
+            out = (proc.stdout or "").strip()
+            return {"ok": False, "error": err or out or "bluetoothctl failed"}
+
+        return {"ok": True}
 
     def _send_json(self, conn, payload):
         body = json.dumps(payload, ensure_ascii=True) + "\n"
@@ -96,6 +140,13 @@ class BluetoothProvisioningServer:
         print(f"Bluetooth client disconnected: {addr}")
 
     def start(self):
+        if self.auto_configure_adapter:
+            config = self._configure_adapter()
+            if config.get("ok"):
+                print(f"Bluetooth alias set to: {self.device_name}")
+            else:
+                print(f"Bluetooth setup warning: {config.get('error')}")
+
         self.server = socket.socket(socket.AF_BLUETOOTH, socket.SOCK_STREAM, socket.BTPROTO_RFCOMM)
         self.server.bind(("", self.channel))
         self.server.listen(self.backlog)
@@ -104,6 +155,7 @@ class BluetoothProvisioningServer:
         print("=" * 60)
         print("Pi4 Bluetooth Wi-Fi Provisioning Server")
         print("=" * 60)
+        print(f"Bluetooth name: {self.device_name}")
         print(f"RFCOMM channel: {self.channel}")
         print(f"Wi-Fi interface: {self.wifi.interface}")
         print("Waiting for Bluetooth client...\n")

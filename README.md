@@ -132,6 +132,29 @@ Biến môi trường:
 
 - `BT_CHANNEL` (mặc định `4`)
 - `WIFI_INTERFACE` (mặc định `wlan0`)
+- `BT_DEVICE_NAME` (mặc định `khanhpi`)
+- `BT_AUTO_SETUP` (mặc định `true`)
+
+### Tự chạy khi Pi4 vừa cấp nguồn
+
+Để Pi4 tự bật Bluetooth provisioning mỗi lần cắm nguồn:
+
+```bash
+chmod +x setup_bt_autostart.sh
+./setup_bt_autostart.sh
+```
+
+Service sẽ:
+
+- Bật `bluetooth.service`
+- Tự chạy `run_bt_provision.sh` khi boot
+- Đặt Bluetooth alias là `khanhpi`, bật discoverable + pairable
+
+Kiểm tra lại:
+
+```bash
+sudo systemctl status pi4-bt-provision.service
+```
 
 ---
 

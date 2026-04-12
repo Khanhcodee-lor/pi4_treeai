@@ -10,7 +10,10 @@ source "$VENV/bin/activate"
 
 export BT_CHANNEL="${BT_CHANNEL:-4}"
 export WIFI_INTERFACE="${WIFI_INTERFACE:-wlan0}"
+export BT_DEVICE_NAME="${BT_DEVICE_NAME:-khanhpi}"
+export BT_AUTO_SETUP="${BT_AUTO_SETUP:-true}"
 
+echo "Bluetooth name: $BT_DEVICE_NAME"
 echo "Bluetooth RFCOMM channel: $BT_CHANNEL"
 echo "Wi-Fi interface: $WIFI_INTERFACE"
 echo "---"
