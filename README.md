@@ -80,6 +80,61 @@ App Mobile
 
 ---
 
+## 📶 Bluetooth Wi-Fi Provisioning (Pi4)
+
+Pi4 hỗ trợ nhận cấu hình Wi-Fi từ app Flutter qua Bluetooth RFCOMM:
+
+1. Bật Bluetooth ở chế độ discoverable/pairable:
+
+```bash
+sudo bluetoothctl <<EOF
+power on
+discoverable on
+pairable on
+agent on
+default-agent
+EOF
+```
+
+2. Chạy provisioning server:
+
+```bash
+./run_bt_provision.sh
+```
+
+3. App Flutter kết nối Bluetooth socket (RFCOMM channel mặc định `4`) và gửi mỗi lệnh dạng 1 JSON trên 1 dòng (`\n` ở cuối).
+
+### Các action hỗ trợ
+
+- `{"action":"ping"}`
+- `{"action":"scan_wifi"}`
+- `{"action":"wifi_status"}`
+- `{"action":"connect_wifi","ssid":"TenWifi","password":"MatKhau"}`
+
+Ví dụ phản hồi thành công khi connect:
+
+```json
+{
+	"ok": true,
+	"action": "connect_wifi",
+	"ssid": "TenWifi",
+	"message": "Device 'wlan0' successfully activated...",
+	"status": {
+		"interface": "wlan0",
+		"state": "connected",
+		"connection": "TenWifi",
+		"ip": "192.168.1.50"
+	}
+}
+```
+
+Biến môi trường:
+
+- `BT_CHANNEL` (mặc định `4`)
+- `WIFI_INTERFACE` (mặc định `wlan0`)
+
+---
+
 ## 📈 Hướng phát triển
 - Xây dựng dashboard web/mobile
 - Mở rộng nhiều node ESP32
