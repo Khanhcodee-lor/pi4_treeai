@@ -6,9 +6,11 @@ __pycache__/
 
 # Virtual environment
 venv/
+myenv/
 
 # Firebase secrets
 firebase_key.json
+.env
 
 # Logs
 *.log

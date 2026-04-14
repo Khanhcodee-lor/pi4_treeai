@@ -9,6 +9,14 @@ from src.services.wifi_manager import WiFiManager
 class BluetoothProvisioningServer:
     """Bluetooth RFCOMM server for Wi-Fi provisioning from mobile apps."""
 
+    SUPPORTED_ACTIONS = [
+        "ping",
+        "scan_wifi",
+        "wifi_status",
+        "connect_wifi",
+        "device_status",
+    ]
+
     def __init__(
         self,
         channel=4,
@@ -63,6 +71,69 @@ class BluetoothProvisioningServer:
         body = json.dumps(payload, ensure_ascii=True) + "\n"
         conn.sendall(body.encode("utf-8"))
 
+    def _run_command(self, args, timeout=10):
+        proc = subprocess.run(args, capture_output=True, text=True, timeout=timeout)
+        stdout = (proc.stdout or "").strip()
+        stderr = (proc.stderr or "").strip()
+        return proc.returncode, stdout, stderr
+
+    def _read_host_ips(self):
+        code, out, _ = self._run_command(["hostname", "-I"], timeout=5)
+        if code != 0 or not out:
+            return []
+        return [item for item in out.split() if item]
+
+    def _read_ssh_service_status(self):
+        candidates = ("ssh", "sshd")
+        result = {
+            "service": None,
+            "active": False,
+            "enabled": False,
+            "listening": False,
+            "error": None,
+        }
+
+        for service_name in candidates:
+            code, out, err = self._run_command(
+                ["systemctl", "show", service_name, "--property", "LoadState", "--value"],
+                timeout=5,
+            )
+            load_state = (out or "").strip()
+            if code == 0 and load_state and load_state != "not-found":
+                result["service"] = service_name
+                break
+
+        if result["service"] is None:
+            result["error"] = "ssh service not found"
+        else:
+            service_name = result["service"]
+            code, out, err = self._run_command(["systemctl", "is-active", service_name], timeout=5)
+            result["active"] = code == 0 and out == "active"
+            if code != 0 and not out:
+                result["error"] = err or "Unable to read ssh active state"
+
+            code, out, err = self._run_command(["systemctl", "is-enabled", service_name], timeout=5)
+            result["enabled"] = code == 0 and out == "enabled"
+            if code != 0 and not out and result["error"] is None:
+                result["error"] = err or "Unable to read ssh enabled state"
+
+        code, out, err = self._run_command(["ss", "-tln"], timeout=5)
+        if code == 0:
+            result["listening"] = any(":22" in line for line in out.splitlines())
+        elif result["error"] is None:
+            result["error"] = err or "Unable to inspect listening sockets"
+
+        return result
+
+    def _device_status(self):
+        return {
+            "ok": True,
+            "hostname": socket.gethostname(),
+            "wifi": self.wifi.status(),
+            "ips": self._read_host_ips(),
+            "ssh": self._read_ssh_service_status(),
+        }
+
     def _handle_action(self, action, payload):
         if action == "ping":
             return {"ok": True, "action": action, "ts": time.time()}
@@ -87,11 +158,16 @@ class BluetoothProvisioningServer:
             result["ssid"] = ssid
             return result
 
+        if action == "device_status":
+            result = self._device_status()
+            result["action"] = action
+            return result
+
         return {
             "ok": False,
             "action": action,
             "error": "Unsupported action",
-            "supported": ["ping", "scan_wifi", "wifi_status", "connect_wifi"],
+            "supported": self.SUPPORTED_ACTIONS,
         }
 
     def _handle_client(self, conn, addr):

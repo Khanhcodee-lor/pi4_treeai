@@ -1,0 +1,3 @@
+# Replace khanhpi with the Linux user running the GitHub Actions runner.
+# Verify command paths on the Pi with: which install systemctl
+khanhpi ALL=(ALL) NOPASSWD: /usr/bin/install, /usr/bin/systemctl

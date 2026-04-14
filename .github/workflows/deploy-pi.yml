@@ -1,0 +1,31 @@
+name: Deploy Pi
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+concurrency:
+  group: pi4-deploy
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on:
+      - self-hosted
+      - pi4
+    timeout-minutes: 20
+    env:
+      PROJECT_DIR: /home/khanhpi/project/pi4_treeai
+      VENV_DIR: /home/khanhpi/project/pi4_treeai/myenv
+      PRIMARY_SERVICE: pi4-tree-ai.service
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Deploy on Pi
+        shell: bash
+        run: |
+          chmod +x deploy/deploy_pi.sh
+          ./deploy/deploy_pi.sh

@@ -1,0 +1,17 @@
+[Unit]
+Description=Pi4 Tree AI Gateway Service
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=khanhpi
+WorkingDirectory=/home/khanhpi/project/pi4_treeai
+Environment=PYTHONUNBUFFERED=1
+EnvironmentFile=-/etc/pi4-tree-ai.env
+ExecStart=/home/khanhpi/project/pi4_treeai/run_tree_ai.sh
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

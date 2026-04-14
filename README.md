@@ -110,6 +110,7 @@ EOF
 - `{"action":"scan_wifi"}`
 - `{"action":"wifi_status"}`
 - `{"action":"connect_wifi","ssid":"TenWifi","password":"MatKhau"}`
+- `{"action":"device_status"}`
 
 Ví dụ phản hồi thành công khi connect:
 
@@ -124,6 +125,30 @@ Ví dụ phản hồi thành công khi connect:
 		"state": "connected",
 		"connection": "TenWifi",
 		"ip": "192.168.1.50"
+	}
+}
+```
+
+Ví dụ phản hồi khi kiểm tra trạng thái thiết bị:
+
+```json
+{
+	"ok": true,
+	"action": "device_status",
+	"hostname": "khanhpi",
+	"ips": ["192.168.1.50"],
+	"wifi": {
+		"interface": "wlan0",
+		"state": "connected",
+		"connection": "TenWifi",
+		"ip": "192.168.1.50"
+	},
+	"ssh": {
+		"service": "ssh",
+		"active": true,
+		"enabled": true,
+		"listening": true,
+		"error": null
 	}
 }
 ```
