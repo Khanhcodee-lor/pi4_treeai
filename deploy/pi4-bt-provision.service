@@ -8,10 +8,12 @@ Type=simple
 User=root
 WorkingDirectory=/home/khanhpi/project/pi4_treeai
 Environment=PYTHONUNBUFFERED=1
+Environment=BT_TRANSPORT=ble
 Environment=BT_CHANNEL=4
 Environment=WIFI_INTERFACE=wlan0
 Environment=BT_DEVICE_NAME=khanhpi
 Environment=BT_AUTO_SETUP=true
+Environment=BT_SCAN_LIMIT=12
 ExecStart=/home/khanhpi/project/pi4_treeai/run_bt_provision.sh
 Restart=always
 RestartSec=3
