@@ -100,10 +100,13 @@ class ProvisioningCommandProcessor:
             return result
 
         if action == "wifi_status":
+            status = self.wifi.status()
+            ok = "error" not in status
             return {
-                "ok": True,
+                "ok": ok,
                 "action": action,
-                "status": self.wifi.status(),
+                "status": status,
+                **({"error": status.get("error")} if not ok else {}),
             }
 
         if action == "connect_wifi":
