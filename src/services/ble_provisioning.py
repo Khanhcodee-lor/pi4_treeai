@@ -319,6 +319,9 @@ class BLEProvisioningServer:
         self.service = None
         self.advertisement = None
         self.adapter_path = None
+        self._startup_complete = False
+        self._startup_error = None
+        self._startup_timeout_id = None
 
     @property
     def wifi(self):
@@ -367,19 +370,71 @@ class BLEProvisioningServer:
 
         raise RuntimeError("BLE adapter with GATT/Advertising manager not found")
 
+    def _set_startup_error(self, message):
+        if self._startup_error is None:
+            self._startup_error = RuntimeError(message)
+
+        if self.mainloop is not None and self.mainloop.is_running():
+            self.mainloop.quit()
+
     def _register_app(self):
         service_manager = dbus.Interface(
             self.bus.get_object(BLUEZ_SERVICE_NAME, self.adapter_path),
             GATT_MANAGER_IFACE,
         )
-        service_manager.RegisterApplication(self.app.get_path(), {})
+        service_manager.RegisterApplication(
+            self.app.get_path(),
+            {},
+            reply_handler=self._on_app_registered,
+            error_handler=self._on_app_registration_failed,
+        )
+
+    def _on_app_registered(self):
+        self._register_advertisement()
+
+    def _on_app_registration_failed(self, error):
+        self._set_startup_error(f"RegisterApplication failed: {error}")
 
     def _register_advertisement(self):
         ad_manager = dbus.Interface(
             self.bus.get_object(BLUEZ_SERVICE_NAME, self.adapter_path),
             LE_ADVERTISING_MANAGER_IFACE,
         )
-        ad_manager.RegisterAdvertisement(self.advertisement.get_path(), {})
+        ad_manager.RegisterAdvertisement(
+            self.advertisement.get_path(),
+            {},
+            reply_handler=self._on_advertisement_registered,
+            error_handler=self._on_advertisement_registration_failed,
+        )
+
+    def _on_advertisement_registered(self):
+        self._startup_complete = True
+
+        if self._startup_timeout_id is not None:
+            GLib.source_remove(self._startup_timeout_id)
+            self._startup_timeout_id = None
+
+        print("=" * 60)
+        print("Pi4 BLE Wi-Fi Provisioning Server")
+        print("=" * 60)
+        print(f"Bluetooth name: {self.device_name}")
+        print(f"Wi-Fi interface: {self.wifi.interface}")
+        print(f"Service UUID: {PROVISIONING_SERVICE_UUID}")
+        print(f"Command Char UUID: {COMMAND_CHARACTERISTIC_UUID}")
+        print(f"Result Char UUID: {RESULT_CHARACTERISTIC_UUID}")
+        print(f"Status Char UUID: {STATUS_CHARACTERISTIC_UUID}")
+        print("App flow: subscribe status, write command, read result.\n")
+
+    def _on_advertisement_registration_failed(self, error):
+        self._set_startup_error(f"RegisterAdvertisement failed: {error}")
+
+    def _on_startup_timeout(self):
+        if not self._startup_complete:
+            self._set_startup_error(
+                "Timed out while registering BLE GATT app/advertisement with BlueZ"
+            )
+
+        return False
 
     def process_command(self, raw):
         if not raw:
@@ -424,27 +479,24 @@ class BLEProvisioningServer:
             service_uuids=[PROVISIONING_SERVICE_UUID],
         )
 
-        self._register_app()
-        self._register_advertisement()
-
-        print("=" * 60)
-        print("Pi4 BLE Wi-Fi Provisioning Server")
-        print("=" * 60)
-        print(f"Bluetooth name: {self.device_name}")
-        print(f"Wi-Fi interface: {self.wifi.interface}")
-        print(f"Service UUID: {PROVISIONING_SERVICE_UUID}")
-        print(f"Command Char UUID: {COMMAND_CHARACTERISTIC_UUID}")
-        print(f"Result Char UUID: {RESULT_CHARACTERISTIC_UUID}")
-        print(f"Status Char UUID: {STATUS_CHARACTERISTIC_UUID}")
-        print("App flow: subscribe status, write command, read result.\n")
-
         self.mainloop = GLib.MainLoop()
+        self._startup_complete = False
+        self._startup_error = None
+        self._startup_timeout_id = GLib.timeout_add_seconds(35, self._on_startup_timeout)
+        self._register_app()
+
         try:
             self.mainloop.run()
         except KeyboardInterrupt:
             print("\nStopping BLE provisioning server...")
         finally:
+            if self._startup_timeout_id is not None:
+                GLib.source_remove(self._startup_timeout_id)
+                self._startup_timeout_id = None
             self.stop()
+
+        if self._startup_error is not None:
+            raise self._startup_error
 
     def stop(self):
         if self.mainloop is not None and self.mainloop.is_running():
