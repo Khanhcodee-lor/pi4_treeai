@@ -6,8 +6,8 @@ import time
 from src.services.wifi_manager import WiFiManager
 
 
-class BluetoothProvisioningServer:
-    """Bluetooth RFCOMM server for Wi-Fi provisioning from mobile apps."""
+class ProvisioningCommandProcessor:
+    """Handle Wi-Fi provisioning actions shared by RFCOMM and BLE servers."""
 
     SUPPORTED_ACTIONS = [
         "ping",
@@ -17,59 +17,9 @@ class BluetoothProvisioningServer:
         "device_status",
     ]
 
-    def __init__(
-        self,
-        channel=4,
-        interface="wlan0",
-        backlog=1,
-        device_name="khanhpi",
-        auto_configure_adapter=True,
-    ):
-        self.channel = int(channel)
-        self.backlog = backlog
+    def __init__(self, interface="wlan0", scan_limit=12):
         self.wifi = WiFiManager(interface=interface)
-        self.device_name = (device_name or "khanhpi").strip() or "khanhpi"
-        self.auto_configure_adapter = bool(auto_configure_adapter)
-        self.server = None
-        self.running = False
-
-    def _configure_adapter(self):
-        """Ensure Bluetooth adapter is powered, renamed, and connectable."""
-        commands = [
-            "power on",
-            f"system-alias {self.device_name}",
-            "discoverable on",
-            "discoverable-timeout 0",
-            "pairable on",
-            "pairable-timeout 0",
-            "agent on",
-            "default-agent",
-            "show",
-            "quit",
-        ]
-
-        cmd = ["bluetoothctl"]
-        try:
-            proc = subprocess.run(
-                cmd,
-                input="\n".join(commands) + "\n",
-                capture_output=True,
-                text=True,
-                timeout=15,
-            )
-        except Exception as exc:
-            return {"ok": False, "error": str(exc)}
-
-        if proc.returncode != 0:
-            err = (proc.stderr or "").strip()
-            out = (proc.stdout or "").strip()
-            return {"ok": False, "error": err or out or "bluetoothctl failed"}
-
-        return {"ok": True}
-
-    def _send_json(self, conn, payload):
-        body = json.dumps(payload, ensure_ascii=True) + "\n"
-        conn.sendall(body.encode("utf-8"))
+        self.scan_limit = int(scan_limit)
 
     def _run_command(self, args, timeout=10):
         proc = subprocess.run(args, capture_output=True, text=True, timeout=timeout)
@@ -134,13 +84,19 @@ class BluetoothProvisioningServer:
             "ssh": self._read_ssh_service_status(),
         }
 
-    def _handle_action(self, action, payload):
+    def handle_action(self, action, payload):
         if action == "ping":
             return {"ok": True, "action": action, "ts": time.time()}
 
         if action == "scan_wifi":
-            result = self.wifi.scan_networks()
+            requested_limit = payload.get("limit", self.scan_limit)
+            try:
+                max_items = max(1, min(int(requested_limit), 30))
+            except (TypeError, ValueError):
+                max_items = self.scan_limit
+            result = self.wifi.scan_networks(max_items=max_items)
             result["action"] = action
+            result["limit"] = max_items
             return result
 
         if action == "wifi_status":
@@ -169,6 +125,69 @@ class BluetoothProvisioningServer:
             "error": "Unsupported action",
             "supported": self.SUPPORTED_ACTIONS,
         }
+
+
+class BluetoothProvisioningServer:
+    """Bluetooth RFCOMM server for Wi-Fi provisioning from mobile apps."""
+
+    def __init__(
+        self,
+        channel=4,
+        interface="wlan0",
+        backlog=1,
+        device_name="khanhpi",
+        auto_configure_adapter=True,
+        scan_limit=12,
+    ):
+        self.channel = int(channel)
+        self.backlog = backlog
+        self.processor = ProvisioningCommandProcessor(interface=interface, scan_limit=scan_limit)
+        self.device_name = (device_name or "khanhpi").strip() or "khanhpi"
+        self.auto_configure_adapter = bool(auto_configure_adapter)
+        self.server = None
+        self.running = False
+
+    @property
+    def wifi(self):
+        return self.processor.wifi
+
+    def _configure_adapter(self):
+        """Ensure Bluetooth adapter is powered, renamed, and connectable."""
+        commands = [
+            "power on",
+            f"system-alias {self.device_name}",
+            "discoverable on",
+            "discoverable-timeout 0",
+            "pairable on",
+            "pairable-timeout 0",
+            "agent on",
+            "default-agent",
+            "show",
+            "quit",
+        ]
+
+        cmd = ["bluetoothctl"]
+        try:
+            proc = subprocess.run(
+                cmd,
+                input="\n".join(commands) + "\n",
+                capture_output=True,
+                text=True,
+                timeout=15,
+            )
+        except Exception as exc:
+            return {"ok": False, "error": str(exc)}
+
+        if proc.returncode != 0:
+            err = (proc.stderr or "").strip()
+            out = (proc.stdout or "").strip()
+            return {"ok": False, "error": err or out or "bluetoothctl failed"}
+
+        return {"ok": True}
+
+    def _send_json(self, conn, payload):
+        body = json.dumps(payload, ensure_ascii=True) + "\n"
+        conn.sendall(body.encode("utf-8"))
 
     def _handle_client(self, conn, addr):
         print(f"Bluetooth client connected: {addr}")
@@ -203,7 +222,7 @@ class BluetoothProvisioningServer:
                     continue
 
                 try:
-                    response = self._handle_action(action, payload)
+                    response = self.processor.handle_action(action, payload)
                 except Exception as exc:
                     response = {
                         "ok": False,
@@ -229,7 +248,7 @@ class BluetoothProvisioningServer:
         self.running = True
 
         print("=" * 60)
-        print("Pi4 Bluetooth Wi-Fi Provisioning Server")
+        print("Pi4 Bluetooth Wi-Fi Provisioning Server (RFCOMM)")
         print("=" * 60)
         print(f"Bluetooth name: {self.device_name}")
         print(f"RFCOMM channel: {self.channel}")
