@@ -34,3 +34,46 @@ SAVE_SNAPSHOTS = os.getenv("SAVE_SNAPSHOTS", "true").lower() in ("1", "true", "y
 SNAPSHOT_DIR = os.getenv("SNAPSHOT_DIR", "detections/snapshots")
 
 VERBOSE = os.getenv("VERBOSE", "true").lower() in ("1", "true", "yes")
+
+# Sensor publish (LM393 DO + DHT11/DHT22)
+SENSOR_PUBLISH_ENABLED = os.getenv("SENSOR_PUBLISH_ENABLED", "true").lower() in (
+    "1",
+    "true",
+    "yes",
+)
+SENSOR_PUBLISH_INTERVAL = float(os.getenv("SENSOR_PUBLISH_INTERVAL", "15"))
+SENSOR_PATH_TEMPLATE = os.getenv("SENSOR_PATH_TEMPLATE", "plant/{device_id}/sensor")
+SENSOR_SOURCE = os.getenv("SENSOR_SOURCE", "uart")
+
+UART_SERIAL_PORT = os.getenv(
+    "UART_SERIAL_PORT",
+    os.getenv("ZIGBEE_SERIAL_PORT", "/dev/serial0"),
+)
+UART_BAUDRATE = int(
+    os.getenv("UART_BAUDRATE", os.getenv("ZIGBEE_BAUDRATE", "115200"))
+)
+UART_SERIAL_TIMEOUT = float(
+    os.getenv("UART_SERIAL_TIMEOUT", os.getenv("ZIGBEE_SERIAL_TIMEOUT", "0.05"))
+)
+UART_STALE_AFTER = float(
+    os.getenv("UART_STALE_AFTER", os.getenv("ZIGBEE_STALE_AFTER", "30"))
+)
+UART_ERROR_STREAK_THRESHOLD = int(
+    os.getenv(
+        "UART_ERROR_STREAK_THRESHOLD",
+        os.getenv("ZIGBEE_ERROR_STREAK_THRESHOLD", "2"),
+    )
+)
+
+SOIL_SENSOR_GPIO = int(os.getenv("SOIL_SENSOR_GPIO", "17"))
+SOIL_SENSOR_ACTIVE_LOW = os.getenv("SOIL_SENSOR_ACTIVE_LOW", "true").lower() in (
+    "1",
+    "true",
+    "yes",
+)
+SOIL_SENSOR_PULL = os.getenv("SOIL_SENSOR_PULL", "up")
+SOIL_SENSOR_SAMPLE_COUNT = int(os.getenv("SOIL_SENSOR_SAMPLE_COUNT", "15"))
+SOIL_SENSOR_SAMPLE_DELAY = float(os.getenv("SOIL_SENSOR_SAMPLE_DELAY", "0.02"))
+
+DHT_SENSOR_TYPE = os.getenv("DHT_SENSOR_TYPE", "DHT11")
+DHT_SENSOR_GPIO = int(os.getenv("DHT_SENSOR_GPIO", "4"))

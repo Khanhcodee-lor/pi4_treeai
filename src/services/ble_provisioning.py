@@ -58,6 +58,7 @@ PROVISIONING_SERVICE_UUID = "0f5c0001-95c7-43f1-b1d5-28f9f0dca001"
 COMMAND_CHARACTERISTIC_UUID = "0f5c0002-95c7-43f1-b1d5-28f9f0dca001"
 RESULT_CHARACTERISTIC_UUID = "0f5c0003-95c7-43f1-b1d5-28f9f0dca001"
 STATUS_CHARACTERISTIC_UUID = "0f5c0004-95c7-43f1-b1d5-28f9f0dca001"
+MAX_GATT_VALUE_BYTES = 512
 
 
 class InvalidArgsException(dbus.exceptions.DBusException if dbus else Exception):
@@ -221,16 +222,60 @@ class ResultCharacteristic(Characteristic):
         )
         super().__init__(bus, index, RESULT_CHARACTERISTIC_UUID, ["read"], service)
 
-    def _encode_json(self, payload):
+    def _json_bytes(self, payload):
         body = json.dumps(payload, ensure_ascii=True, separators=(",", ":"))
-        return [dbus.Byte(byte) for byte in body.encode("utf-8")]
+        return body.encode("utf-8")
+
+    def _encode_bytes(self, raw):
+        return [dbus.Byte(byte) for byte in raw]
+
+    def _encode_json(self, payload):
+        return self._encode_bytes(self._json_bytes(payload))
+
+    def _fit_payload_for_ble(self, payload):
+        raw = self._json_bytes(payload)
+        if len(raw) <= MAX_GATT_VALUE_BYTES:
+            return payload
+
+        if isinstance(payload, dict) and isinstance(payload.get("networks"), list):
+            total_networks = len(payload["networks"])
+            for count in range(total_networks, -1, -1):
+                candidate = dict(payload)
+                candidate["networks"] = payload["networks"][:count]
+                candidate["total_networks"] = total_networks
+                candidate["truncated"] = count < total_networks
+                if candidate["truncated"]:
+                    candidate["message"] = "Scan result truncated to fit BLE payload limit"
+
+                if len(self._json_bytes(candidate)) <= MAX_GATT_VALUE_BYTES:
+                    return candidate
+
+        return {
+            "ok": False,
+            "error": "Response too large for BLE payload limit",
+            "max_bytes": MAX_GATT_VALUE_BYTES,
+        }
+
+    def _read_with_offset(self, options):
+        offset = 0
+        if options:
+            try:
+                offset = int(options.get("offset", 0))
+            except (TypeError, ValueError):
+                raise InvalidArgsException()
+
+        if offset < 0 or offset > len(self.value):
+            raise InvalidArgsException()
+
+        return self.value[offset:]
 
     def set_payload(self, payload):
-        self.value = self._encode_json(payload)
+        fitted_payload = self._fit_payload_for_ble(payload)
+        self.value = self._encode_json(fitted_payload)
 
     @dbus.service.method(GATT_CHRC_IFACE, in_signature="a{sv}", out_signature="ay")
     def ReadValue(self, options):
-        return self.value
+        return self._read_with_offset(options)
 
 
 class StatusCharacteristic(Characteristic):
@@ -255,7 +300,17 @@ class StatusCharacteristic(Characteristic):
 
     @dbus.service.method(GATT_CHRC_IFACE, in_signature="a{sv}", out_signature="ay")
     def ReadValue(self, options):
-        return self.value
+        offset = 0
+        if options:
+            try:
+                offset = int(options.get("offset", 0))
+            except (TypeError, ValueError):
+                raise InvalidArgsException()
+
+        if offset < 0 or offset > len(self.value):
+            raise InvalidArgsException()
+
+        return self.value[offset:]
 
     @dbus.service.method(GATT_CHRC_IFACE)
     def StartNotify(self):

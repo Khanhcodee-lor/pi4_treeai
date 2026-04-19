@@ -8,6 +8,7 @@ import numpy as np
 from src.ai.detector import RemoteDetector
 from src.camera.camera_manager import CameraManager
 from src.services.firebase_command import FirebaseCommandListener
+from src.services.sensor_publisher import SensorPublisher
 from src.utils.config import *
 
 
@@ -137,6 +138,26 @@ def main():
     camera = CameraManager(WIDTH, HEIGHT, backend=CAMERA_BACKEND, camera_index=CAMERA_INDEX)
     detector = RemoteDetector(server_url=SERVER_URL, conf=CONF)
     fb = FirebaseCommandListener(db_url=FIREBASE_DB_URL, device_id=DEVICE_ID)
+    sensor_publisher = SensorPublisher(
+        db_url=FIREBASE_DB_URL,
+        device_id=DEVICE_ID,
+        path_template=SENSOR_PATH_TEMPLATE,
+        enabled=SENSOR_PUBLISH_ENABLED,
+        publish_interval=SENSOR_PUBLISH_INTERVAL,
+        sensor_source=SENSOR_SOURCE,
+        uart_serial_port=UART_SERIAL_PORT,
+        uart_baudrate=UART_BAUDRATE,
+        uart_serial_timeout=UART_SERIAL_TIMEOUT,
+        uart_stale_after=UART_STALE_AFTER,
+        uart_error_streak_threshold=UART_ERROR_STREAK_THRESHOLD,
+        soil_gpio=SOIL_SENSOR_GPIO,
+        soil_active_low=SOIL_SENSOR_ACTIVE_LOW,
+        soil_pull=SOIL_SENSOR_PULL,
+        soil_sample_count=SOIL_SENSOR_SAMPLE_COUNT,
+        soil_sample_delay=SOIL_SENSOR_SAMPLE_DELAY,
+        dht_gpio=DHT_SENSOR_GPIO,
+        dht_sensor_type=DHT_SENSOR_TYPE,
+    )
     
     print(f"📷 Camera: {WIDTH}x{HEIGHT} @ {CAMERA_BACKEND}")
     print(f"🌐 Server: {SERVER_URL}")
@@ -149,6 +170,8 @@ def main():
         start_time = time.time()
         
         while True:
+            sensor_publisher.publish_if_due()
+
             # Poll Firebase for command
             command = fb.get_command()
             
@@ -234,6 +257,7 @@ def main():
         print(f"Stopped. Captures: {capture_count} | Time: {elapsed:.1f}s")
         print("=" * 60)
     finally:
+        sensor_publisher.stop()
         camera.stop()
 
 

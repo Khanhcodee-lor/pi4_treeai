@@ -2,3 +2,6 @@ opencv-python
 numpy
 requests
 firebase-admin
+Adafruit_DHT
+adafruit-circuitpython-dht
+pyserial
