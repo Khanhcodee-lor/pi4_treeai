@@ -165,6 +165,7 @@ class SensorPublisher:
             return
 
         self._setup_firebase()
+        self._restore_last_published_state()
         self._setup_sensor_backends()
 
         print(f"Sensor publisher enabled: every {self.publish_interval:.0f}s")
@@ -225,6 +226,75 @@ class SensorPublisher:
         except Exception as exc:
             print(f"Sensor publisher disabled (Firebase init error): {exc}")
             self.enabled = False
+
+    def _restore_last_published_state(self):
+        if not self.enabled or self._ref is None:
+            return
+
+        try:
+            snapshot = self._ref.get()
+        except Exception as exc:
+            print(f"Sensor warning: failed to restore last sensor state: {exc}")
+            return
+
+        if not isinstance(snapshot, dict):
+            return
+
+        restored_parts = []
+
+        soil = snapshot.get("soil")
+        if isinstance(soil, dict):
+            if self.sensor_source in ("uart", "ble"):
+                self._last_remote_soil.update(soil)
+
+            soil_raw = soil.get("do_raw")
+            if soil_raw in (0, 1):
+                self._last_soil_raw = soil_raw
+
+            restored_parts.append("soil")
+
+        air = snapshot.get("air")
+        if isinstance(air, dict):
+            if self.sensor_source in ("uart", "ble"):
+                self._last_remote_air.update(air)
+
+            humidity = air.get("humidity")
+            if isinstance(humidity, (int, float)) and not isinstance(humidity, bool):
+                self._last_good_humidity = round(float(humidity), 2)
+
+            temperature_c = air.get("temperature_c")
+            if isinstance(temperature_c, (int, float)) and not isinstance(
+                temperature_c, bool
+            ):
+                self._last_good_temperature_c = round(float(temperature_c), 2)
+
+            restored_parts.append("air")
+
+        meta = snapshot.get("meta")
+        if isinstance(meta, dict) and self.sensor_source in ("uart", "ble"):
+            self._last_remote_meta.update(meta)
+            restored_parts.append("meta")
+
+        if self.sensor_source in ("uart", "ble"):
+            top_timestamp = snapshot.get("timestamp")
+            link = snapshot.get("link")
+            last_rx_age = link.get("last_rx_age_s") if isinstance(link, dict) else None
+
+            if isinstance(top_timestamp, (int, float)) and not isinstance(
+                top_timestamp, bool
+            ):
+                restored_rx_at = float(top_timestamp)
+                if isinstance(last_rx_age, (int, float)) and not isinstance(
+                    last_rx_age, bool
+                ):
+                    restored_rx_at -= max(0.0, float(last_rx_age))
+                self._last_remote_received_at = max(0.0, restored_rx_at)
+
+        if restored_parts:
+            print(
+                "Sensor cache restored from Firebase: "
+                + ", ".join(sorted(set(restored_parts)))
+            )
 
     def _setup_sensor_backends(self):
         if not self.enabled:
@@ -423,13 +493,10 @@ class SensorPublisher:
             errors.append("uart_payload_empty")
 
         ok = len(errors) == 0
-        return {
+        payload = {
             "timestamp": now,
             "updated_at": now_iso,
             "source": "uart",
-            "soil": soil,
-            "air": air,
-            "meta": meta,
             "link": {
                 "port": self.uart_serial_port,
                 "baudrate": self.uart_baudrate,
@@ -439,6 +506,15 @@ class SensorPublisher:
             "ok": ok,
             "errors": errors,
         }
+
+        if soil:
+            payload["soil"] = soil
+        if air:
+            payload["air"] = air
+        if meta:
+            payload["meta"] = meta
+
+        return payload
 
     def _read_latest_uart_frame(self):
         if self._serial is None:
@@ -591,13 +667,10 @@ class SensorPublisher:
             errors.append("ble_payload_empty")
 
         ok = len(errors) == 0
-        return {
+        payload = {
             "timestamp": now,
             "updated_at": now_iso,
             "source": "ble",
-            "soil": soil,
-            "air": air,
-            "meta": meta,
             "link": {
                 "device_name": self.ble_device_name,
                 "address": self.ble_address,
@@ -609,6 +682,15 @@ class SensorPublisher:
             "ok": ok,
             "errors": errors,
         }
+
+        if soil:
+            payload["soil"] = soil
+        if air:
+            payload["air"] = air
+        if meta:
+            payload["meta"] = meta
+
+        return payload
 
     def _build_local_payload(self, now, now_iso):
         errors = []
@@ -695,7 +777,7 @@ class SensorPublisher:
         if ones == zeros:
             if self._last_soil_raw in (0, 1):
                 return self._last_soil_raw, ones, zeros
-            return 0, ones, zeros
+            return None, ones, zeros
 
         raw = 1 if ones > zeros else 0
         return raw, ones, zeros
