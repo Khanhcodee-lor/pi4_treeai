@@ -137,9 +137,6 @@ def main():
         ensure_snapshot_dir()
         print(f"📁 Snapshots: {SNAPSHOT_DIR}")
     
-    camera = CameraManager(WIDTH, HEIGHT, backend=CAMERA_BACKEND, camera_index=CAMERA_INDEX)
-    detector = RemoteDetector(server_url=SERVER_URL, conf=CONF)
-    fb = FirebaseCommandListener(db_url=FIREBASE_DB_URL, device_id=DEVICE_ID)
     sensor_publisher = SensorPublisher(
         db_url=FIREBASE_DB_URL,
         device_id=DEVICE_ID,
@@ -189,6 +186,27 @@ def main():
         rotate=OLED_ROTATE,
         update_interval=OLED_UPDATE_INTERVAL,
     )
+
+    try:
+        camera = CameraManager(WIDTH, HEIGHT, backend=CAMERA_BACKEND, camera_index=CAMERA_INDEX)
+    except Exception as exc:
+        camera = None
+        print(f"Camera warning: {exc}")
+
+    detector = RemoteDetector(server_url=SERVER_URL, conf=CONF)
+    fb = FirebaseCommandListener(db_url=FIREBASE_DB_URL, device_id=DEVICE_ID)
+
+    if oled is not None and OLED_ENABLED:
+        try:
+            wifi_status = wifi_manager.status() if wifi_manager is not None else {}
+            oled.update(
+                wifi_ssid=wifi_status.get("connection"),
+                wifi_ip=wifi_status.get("ip"),
+                ble_connected=None,
+                firebase_ok=None,
+            )
+        except Exception as exc:
+            print(f"OLED warning: initial update failed: {exc}")
     
     print(f"📷 Camera: {WIDTH}x{HEIGHT} @ {CAMERA_BACKEND}")
     print(f"🌐 Server: {SERVER_URL}")
@@ -216,7 +234,6 @@ def main():
                     wifi_ssid=wifi_ssid,
                     wifi_ip=wifi_ip,
                     ble_connected=status.get("ble_connected"),
-                    firebase_ok=status.get("last_publish_ok"),
                 )
 
             # Poll Firebase for command
@@ -233,11 +250,13 @@ def main():
                 fb.update_status("processing", request_id)
                 
                 # Get fresh frame
-                for _ in range(10):  # Try 10 times with 100ms delay
-                    frame = camera.get_frame()
-                    if frame is not None:
-                        break
-                    time.sleep(0.1)
+                frame = None
+                if camera is not None:
+                    for _ in range(10):  # Try 10 times with 100ms delay
+                        frame = camera.get_frame()
+                        if frame is not None:
+                            break
+                        time.sleep(0.1)
 
                 captured_at_epoch = time.time()
                 captured_at_iso = datetime.now().isoformat(timespec="seconds")

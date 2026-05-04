@@ -1,4 +1,5 @@
 import time
+from pathlib import Path
 
 try:
     import board
@@ -11,7 +12,7 @@ except ImportError:
 
 
 class OledStatusDisplay:
-    """Minimal OLED status renderer for Wi-Fi, BLE, and Firebase publish state."""
+    """Minimal OLED status renderer for current Wi-Fi and ESP32 BLE state."""
 
     def __init__(
         self,
@@ -52,11 +53,42 @@ class OledStatusDisplay:
             i2c,
             addr=self.i2c_address,
         )
+        try:
+            self._display.contrast(255)
+        except Exception:
+            pass
         self._display.fill(0)
         self._display.show()
-        self._font = ImageFont.load_default()
+        self._font = self._load_font()
+        self._show_boot_splash()
 
-    def update_if_due(self, wifi_ssid, wifi_ip, ble_connected, firebase_ok):
+    def _load_font(self):
+        font_candidates = [
+            "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf",
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+        ]
+
+        for font_path in font_candidates:
+            if Path(font_path).exists():
+                try:
+                    return ImageFont.truetype(font_path, 9)
+                except Exception:
+                    pass
+
+        return ImageFont.load_default()
+
+    def _show_boot_splash(self):
+        image = Image.new("1", (self.width, self.height))
+        draw = ImageDraw.Draw(image)
+
+        draw.text((0, 0), "OLED OK", font=self._font, fill=255)
+        draw.text((0, 18), "Pi4 Gateway", font=self._font, fill=255)
+        draw.text((0, 36), "Starting...", font=self._font, fill=255)
+
+        self._display.image(image)
+        self._display.show()
+
+    def update_if_due(self, wifi_ssid, wifi_ip, ble_connected):
         if not self.enabled:
             return
 
@@ -65,9 +97,9 @@ class OledStatusDisplay:
             return
 
         self._last_update_at = now
-        self.update(wifi_ssid, wifi_ip, ble_connected, firebase_ok)
+        self.update(wifi_ssid, wifi_ip, ble_connected)
 
-    def update(self, wifi_ssid, wifi_ip, ble_connected, firebase_ok):
+    def update(self, wifi_ssid, wifi_ip, ble_connected):
         if not self.enabled:
             return
 
@@ -75,13 +107,12 @@ class OledStatusDisplay:
         draw = ImageDraw.Draw(image)
 
         lines = [
-            f"WiFi: {self._trim(wifi_ssid)}",
-            f"IP: {self._trim(wifi_ip)}",
-            f"BLE: {self._bool_text(ble_connected, 'ON', 'OFF')}",
-            f"FB: {self._bool_text(firebase_ok, 'OK', 'ERR')}",
+            f"WiFi:{self._trim(wifi_ssid, 11)}",
+            f"IP:{self._trim(wifi_ip, 15)}",
+            f"BLE:{self._bool_text(ble_connected, 'ESP32 ON', 'ESP32 OFF')}",
         ]
 
-        line_height = 12
+        line_height = 18
         y = 0
         for line in lines:
             draw.text((0, y), line, font=self._font, fill=255)
