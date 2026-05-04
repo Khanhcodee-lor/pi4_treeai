@@ -203,7 +203,6 @@ def main():
                 wifi_ssid=wifi_status.get("connection"),
                 wifi_ip=wifi_status.get("ip"),
                 ble_connected=None,
-                firebase_ok=None,
             )
         except Exception as exc:
             print(f"OLED warning: initial update failed: {exc}")

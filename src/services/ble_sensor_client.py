@@ -25,6 +25,7 @@ class BleJsonReceiver:
         max_buffer_bytes=4096,
     ):
         self.device_name = (device_name or "").strip() or None
+        self._device_name_lc = self.device_name.lower() if self.device_name else None
         self.address = (address or "").strip() or None
         self.service_uuid = (service_uuid or "").strip().lower() or None
         self.notify_char_uuid = (notify_char_uuid or "").strip().lower() or None
@@ -118,19 +119,34 @@ class BleJsonReceiver:
             self._set_error("ble_device_not_found")
             return None
 
-        if self.device_name:
+        if self._device_name_lc:
             for dev in devices:
-                if (dev.name or "").strip() == self.device_name:
+                name = (dev.name or "").strip()
+                if name and name.lower() == self._device_name_lc:
                     return dev
 
         if self.service_uuid:
             for dev in devices:
-                uuids = [item.lower() for item in (dev.metadata.get("uuids") or [])]
+                uuids = self._extract_device_uuids(dev)
                 if self.service_uuid in uuids:
                     return dev
 
         self._set_error("ble_device_not_found")
         return None
+
+    def _extract_device_uuids(self, dev):
+        uuids = []
+
+        metadata = getattr(dev, "metadata", None)
+        if isinstance(metadata, dict):
+            uuids = metadata.get("uuids") or metadata.get("service_uuids") or []
+
+        if not uuids:
+            details = getattr(dev, "details", None)
+            if isinstance(details, dict):
+                uuids = details.get("uuids") or details.get("service_uuids") or []
+
+        return [item.lower() for item in uuids if isinstance(item, str)]
 
     async def _connect_and_listen(self, device):
         async with BleakClient(device, timeout=self.connect_timeout) as client:
