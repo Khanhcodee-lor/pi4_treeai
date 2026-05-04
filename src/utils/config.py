@@ -3,6 +3,8 @@ import os
 
 DEVICE_ID = os.getenv("DEVICE_ID", "tomato_001")
 
+WIFI_INTERFACE = os.getenv("WIFI_INTERFACE", "wlan0")
+
 # Firebase
 FIREBASE_DB_URL = os.getenv(
     "FIREBASE_DB_URL",
@@ -64,6 +66,26 @@ UART_ERROR_STREAK_THRESHOLD = int(
         os.getenv("ZIGBEE_ERROR_STREAK_THRESHOLD", "2"),
     )
 )
+
+# BLE sensor source (ESP32 as peripheral, Pi4 as central)
+BLE_DEVICE_NAME = os.getenv("BLE_DEVICE_NAME", "")
+BLE_ADDRESS = os.getenv("BLE_ADDRESS", "")
+BLE_SERVICE_UUID = os.getenv("BLE_SERVICE_UUID", "")
+BLE_NOTIFY_CHAR_UUID = os.getenv("BLE_NOTIFY_CHAR_UUID", "")
+BLE_SCAN_TIMEOUT = float(os.getenv("BLE_SCAN_TIMEOUT", "6"))
+BLE_CONNECT_TIMEOUT = float(os.getenv("BLE_CONNECT_TIMEOUT", "10"))
+BLE_RECONNECT_DELAY = float(os.getenv("BLE_RECONNECT_DELAY", "3"))
+BLE_STALE_AFTER = float(os.getenv("BLE_STALE_AFTER", "30"))
+BLE_ERROR_STREAK_THRESHOLD = int(os.getenv("BLE_ERROR_STREAK_THRESHOLD", "2"))
+
+# OLED status display (SSD1306)
+OLED_ENABLED = os.getenv("OLED_ENABLED", "false").lower() in ("1", "true", "yes")
+OLED_I2C_ADDRESS = int(os.getenv("OLED_I2C_ADDRESS", "60"))
+OLED_WIDTH = int(os.getenv("OLED_WIDTH", "128"))
+OLED_HEIGHT = int(os.getenv("OLED_HEIGHT", "64"))
+OLED_ROTATE = int(os.getenv("OLED_ROTATE", "0"))
+OLED_UPDATE_INTERVAL = float(os.getenv("OLED_UPDATE_INTERVAL", "2"))
+OLED_WIFI_REFRESH_INTERVAL = float(os.getenv("OLED_WIFI_REFRESH_INTERVAL", "10"))
 
 SOIL_SENSOR_GPIO = int(os.getenv("SOIL_SENSOR_GPIO", "17"))
 SOIL_SENSOR_ACTIVE_LOW = os.getenv("SOIL_SENSOR_ACTIVE_LOW", "true").lower() in (

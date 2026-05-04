@@ -9,6 +9,8 @@ from src.ai.detector import RemoteDetector
 from src.camera.camera_manager import CameraManager
 from src.services.firebase_command import FirebaseCommandListener
 from src.services.sensor_publisher import SensorPublisher
+from src.services.wifi_manager import WiFiManager
+from src.services.oled_status import OledStatusDisplay
 from src.utils.config import *
 
 
@@ -150,6 +152,15 @@ def main():
         uart_serial_timeout=UART_SERIAL_TIMEOUT,
         uart_stale_after=UART_STALE_AFTER,
         uart_error_streak_threshold=UART_ERROR_STREAK_THRESHOLD,
+        ble_device_name=BLE_DEVICE_NAME,
+        ble_address=BLE_ADDRESS,
+        ble_service_uuid=BLE_SERVICE_UUID,
+        ble_notify_char_uuid=BLE_NOTIFY_CHAR_UUID,
+        ble_scan_timeout=BLE_SCAN_TIMEOUT,
+        ble_connect_timeout=BLE_CONNECT_TIMEOUT,
+        ble_reconnect_delay=BLE_RECONNECT_DELAY,
+        ble_stale_after=BLE_STALE_AFTER,
+        ble_error_streak_threshold=BLE_ERROR_STREAK_THRESHOLD,
         soil_gpio=SOIL_SENSOR_GPIO,
         soil_active_low=SOIL_SENSOR_ACTIVE_LOW,
         soil_pull=SOIL_SENSOR_PULL,
@@ -157,6 +168,26 @@ def main():
         soil_sample_delay=SOIL_SENSOR_SAMPLE_DELAY,
         dht_gpio=DHT_SENSOR_GPIO,
         dht_sensor_type=DHT_SENSOR_TYPE,
+    )
+
+    wifi_manager = None
+    wifi_ssid = None
+    wifi_ip = None
+    last_wifi_check = 0.0
+
+    if OLED_ENABLED:
+        try:
+            wifi_manager = WiFiManager(interface=WIFI_INTERFACE)
+        except Exception as exc:
+            print(f"OLED warning: Wi-Fi status unavailable: {exc}")
+
+    oled = OledStatusDisplay(
+        enabled=OLED_ENABLED,
+        width=OLED_WIDTH,
+        height=OLED_HEIGHT,
+        i2c_address=OLED_I2C_ADDRESS,
+        rotate=OLED_ROTATE,
+        update_interval=OLED_UPDATE_INTERVAL,
     )
     
     print(f"📷 Camera: {WIDTH}x{HEIGHT} @ {CAMERA_BACKEND}")
@@ -171,6 +202,22 @@ def main():
         
         while True:
             sensor_publisher.publish_if_due()
+
+            if oled is not None and OLED_ENABLED:
+                now = time.time()
+                if wifi_manager is not None and now - last_wifi_check >= OLED_WIFI_REFRESH_INTERVAL:
+                    status = wifi_manager.status()
+                    wifi_ssid = status.get("connection")
+                    wifi_ip = status.get("ip")
+                    last_wifi_check = now
+
+                status = sensor_publisher.get_status_snapshot()
+                oled.update_if_due(
+                    wifi_ssid=wifi_ssid,
+                    wifi_ip=wifi_ip,
+                    ble_connected=status.get("ble_connected"),
+                    firebase_ok=status.get("last_publish_ok"),
+                )
 
             # Poll Firebase for command
             command = fb.get_command()

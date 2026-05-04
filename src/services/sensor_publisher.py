@@ -5,6 +5,8 @@ from datetime import datetime
 import firebase_admin
 from firebase_admin import db
 
+from src.services.ble_sensor_client import BleJsonReceiver
+
 try:
     import serial
 except ImportError:
@@ -44,6 +46,15 @@ class SensorPublisher:
         uart_serial_timeout=0.05,
         uart_stale_after=30.0,
         uart_error_streak_threshold=2,
+        ble_device_name=None,
+        ble_address=None,
+        ble_service_uuid=None,
+        ble_notify_char_uuid=None,
+        ble_scan_timeout=6.0,
+        ble_connect_timeout=10.0,
+        ble_reconnect_delay=3.0,
+        ble_stale_after=30.0,
+        ble_error_streak_threshold=2,
         zigbee_serial_port=None,
         zigbee_baudrate=None,
         zigbee_serial_timeout=None,
@@ -73,7 +84,7 @@ class SensorPublisher:
         self.sensor_source = (sensor_source or "local").strip().lower()
         if self.sensor_source in ("zigbee_uart", "zigbee"):
             self.sensor_source = "uart"
-        if self.sensor_source not in ("local", "uart"):
+        if self.sensor_source not in ("local", "uart", "ble"):
             print(f"Sensor warning: unknown source '{self.sensor_source}', fallback to local")
             self.sensor_source = "local"
 
@@ -102,6 +113,16 @@ class SensorPublisher:
             ),
         )
 
+        self.ble_device_name = (ble_device_name or "").strip() or None
+        self.ble_address = (ble_address or "").strip() or None
+        self.ble_service_uuid = (ble_service_uuid or "").strip() or None
+        self.ble_notify_char_uuid = (ble_notify_char_uuid or "").strip() or None
+        self.ble_scan_timeout = max(1.0, float(ble_scan_timeout))
+        self.ble_connect_timeout = max(1.0, float(ble_connect_timeout))
+        self.ble_reconnect_delay = max(1.0, float(ble_reconnect_delay))
+        self.ble_stale_after = max(1.0, float(ble_stale_after))
+        self.ble_error_streak_threshold = max(1, int(ble_error_streak_threshold))
+
         self.soil_gpio = int(soil_gpio)
         self.soil_active_low = bool(soil_active_low)
         self.soil_pull = (soil_pull or "up").strip().lower()
@@ -115,14 +136,19 @@ class SensorPublisher:
         self.dht_error_streak_threshold = max(1, int(dht_error_streak_threshold))
 
         self._last_publish = 0.0
+        self._last_publish_at = 0.0
+        self._last_publish_ok = None
+        self._last_publish_error = None
         self._ref = None
 
         self._serial = None
         self._last_remote_received_at = 0.0
         self._uart_fail_streak = 0
+        self._ble_fail_streak = 0
         self._last_remote_soil = {}
         self._last_remote_air = {}
         self._last_remote_meta = {}
+        self._ble_receiver = None
 
         self._gpio_ready = False
         self._dht_backend = None
@@ -153,6 +179,24 @@ class SensorPublisher:
             print(
                 f"  UART policy: stale_after={self.uart_stale_after:.1f}s, "
                 f"error_after={self.uart_error_streak_threshold} consecutive fails"
+            )
+        elif self.sensor_source == "ble":
+            print("  BLE: auto-connect sensor source")
+            if self.ble_device_name:
+                print(f"    Device name: {self.ble_device_name}")
+            if self.ble_address:
+                print(f"    Address: {self.ble_address}")
+            if self.ble_service_uuid:
+                print(f"    Service UUID: {self.ble_service_uuid}")
+            if self.ble_notify_char_uuid:
+                print(f"    Notify Char UUID: {self.ble_notify_char_uuid}")
+            print(
+                f"    Connect timeout={self.ble_connect_timeout:.1f}s, "
+                f"reconnect_delay={self.ble_reconnect_delay:.1f}s"
+            )
+            print(
+                f"    BLE policy: stale_after={self.ble_stale_after:.1f}s, "
+                f"error_after={self.ble_error_streak_threshold} consecutive fails"
             )
         else:
             print(f"  Soil DO: GPIO{self.soil_gpio} (active_low={self.soil_active_low})")
@@ -190,6 +234,10 @@ class SensorPublisher:
             self._setup_uart_backend()
             return
 
+        if self.sensor_source == "ble":
+            self._setup_ble_backend()
+            return
+
         self._setup_local_sensor_backends()
 
     def _setup_uart_backend(self):
@@ -210,6 +258,21 @@ class SensorPublisher:
         except Exception as exc:
             self._serial = None
             print(f"Sensor warning: failed to open uart serial {self.uart_serial_port}: {exc}")
+
+    def _setup_ble_backend(self):
+        self._ble_receiver = BleJsonReceiver(
+            device_name=self.ble_device_name,
+            address=self.ble_address,
+            service_uuid=self.ble_service_uuid,
+            notify_char_uuid=self.ble_notify_char_uuid,
+            scan_timeout=self.ble_scan_timeout,
+            connect_timeout=self.ble_connect_timeout,
+            reconnect_delay=self.ble_reconnect_delay,
+        )
+
+        if not self._ble_receiver.start():
+            print("Sensor warning: BLE receiver failed to start")
+            self._ble_receiver = None
 
     def _setup_local_sensor_backends(self):
         if GPIO is None:
@@ -303,13 +366,21 @@ class SensorPublisher:
 
         if self.sensor_source == "uart":
             payload = self._build_remote_payload(now=now, now_iso=now_iso)
+        elif self.sensor_source == "ble":
+            payload = self._build_ble_payload(now=now, now_iso=now_iso)
         else:
             payload = self._build_local_payload(now=now, now_iso=now_iso)
 
         try:
             self._ref.update(payload)
+            self._last_publish_at = now
+            self._last_publish_ok = True
+            self._last_publish_error = None
         except Exception as exc:
             print(f"Sensor publisher write error: {exc}")
+            self._last_publish_at = now
+            self._last_publish_ok = False
+            self._last_publish_error = str(exc)
 
     def _build_remote_payload(self, now, now_iso):
         errors = []
@@ -406,6 +477,15 @@ class SensorPublisher:
 
         return latest, parse_error
 
+    def _read_latest_ble_frame(self):
+        if self._ble_receiver is None:
+            self._setup_ble_backend()
+            if self._ble_receiver is None:
+                return None, None, "ble_receiver_unavailable"
+
+        payload, received_at, last_error, _connected = self._ble_receiver.get_latest()
+        return payload, received_at, last_error
+
     def _normalize_remote_payload(self, payload):
         if not isinstance(payload, dict):
             return {}, {}, {}
@@ -466,6 +546,69 @@ class SensorPublisher:
             meta["remote_errors"] = payload.get("errors")
 
         return soil, air, meta
+
+    def _build_ble_payload(self, now, now_iso):
+        errors = []
+
+        frame, received_at, read_error = self._read_latest_ble_frame()
+        if frame is not None:
+            soil_part, air_part, meta_part = self._normalize_remote_payload(frame)
+            if soil_part:
+                self._last_remote_soil.update(soil_part)
+            if air_part:
+                self._last_remote_air.update(air_part)
+            if meta_part:
+                self._last_remote_meta.update(meta_part)
+
+            if received_at:
+                self._last_remote_received_at = received_at
+            else:
+                self._last_remote_received_at = now
+            self._ble_fail_streak = 0
+        else:
+            self._ble_fail_streak += 1
+            if read_error is None:
+                read_error = "ble_no_new_frame"
+
+        age = None
+        if self._last_remote_received_at > 0:
+            age = round(now - self._last_remote_received_at, 2)
+            if age > self.ble_stale_after:
+                errors.append(f"ble_stale({age}s)")
+        else:
+            errors.append("ble_never_received")
+
+        if self._ble_fail_streak >= self.ble_error_streak_threshold and read_error:
+            errors.append(
+                f"ble_read_failed(streak={self._ble_fail_streak}): {read_error}"
+            )
+
+        soil = dict(self._last_remote_soil)
+        air = dict(self._last_remote_air)
+        meta = dict(self._last_remote_meta)
+
+        if not soil and not air:
+            errors.append("ble_payload_empty")
+
+        ok = len(errors) == 0
+        return {
+            "timestamp": now,
+            "updated_at": now_iso,
+            "source": "ble",
+            "soil": soil,
+            "air": air,
+            "meta": meta,
+            "link": {
+                "device_name": self.ble_device_name,
+                "address": self.ble_address,
+                "service_uuid": self.ble_service_uuid,
+                "notify_char_uuid": self.ble_notify_char_uuid,
+                "last_rx_age_s": age,
+                "read_fail_streak": self._ble_fail_streak,
+            },
+            "ok": ok,
+            "errors": errors,
+        }
 
     def _build_local_payload(self, now, now_iso):
         errors = []
@@ -604,6 +747,10 @@ class SensorPublisher:
     def stop(self):
         self._close_uart_serial()
 
+        if self._ble_receiver is not None:
+            self._ble_receiver.stop()
+            self._ble_receiver = None
+
         if self._dht_backend == "circuitpython" and self._dht_device is not None:
             try:
                 self._dht_device.exit()
@@ -615,3 +762,19 @@ class SensorPublisher:
                 GPIO.cleanup(self.soil_gpio)
             except Exception:
                 pass
+
+    def get_status_snapshot(self):
+        status = {
+            "last_publish_at": self._last_publish_at,
+            "last_publish_ok": self._last_publish_ok,
+            "last_publish_error": self._last_publish_error,
+            "ble_connected": None,
+            "ble_error": None,
+        }
+
+        if self.sensor_source == "ble" and self._ble_receiver is not None:
+            _payload, _received_at, last_error, connected = self._ble_receiver.get_latest()
+            status["ble_connected"] = connected
+            status["ble_error"] = last_error
+
+        return status

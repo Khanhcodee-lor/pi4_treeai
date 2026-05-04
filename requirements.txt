@@ -5,3 +5,7 @@ firebase-admin
 Adafruit_DHT
 adafruit-circuitpython-dht
 pyserial
+bleak
+adafruit-blinka
+adafruit-circuitpython-ssd1306
+pillow

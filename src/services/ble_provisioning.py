@@ -1,6 +1,7 @@
 import json
 import subprocess
 import types
+from urllib.parse import parse_qsl
 
 from src.services.bluetooth_provisioning import ProvisioningCommandProcessor
 
@@ -59,6 +60,8 @@ COMMAND_CHARACTERISTIC_UUID = "0f5c0002-95c7-43f1-b1d5-28f9f0dca001"
 RESULT_CHARACTERISTIC_UUID = "0f5c0003-95c7-43f1-b1d5-28f9f0dca001"
 STATUS_CHARACTERISTIC_UUID = "0f5c0004-95c7-43f1-b1d5-28f9f0dca001"
 MAX_GATT_VALUE_BYTES = 512
+MAX_RESULT_VALUE_BYTES = 480
+MAX_COMMAND_BUFFER_BYTES = 4096
 
 
 class InvalidArgsException(dbus.exceptions.DBusException if dbus else Exception):
@@ -223,7 +226,7 @@ class ResultCharacteristic(Characteristic):
         super().__init__(bus, index, RESULT_CHARACTERISTIC_UUID, ["read"], service)
 
     def _json_bytes(self, payload):
-        body = json.dumps(payload, ensure_ascii=True, separators=(",", ":"))
+        body = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
         return body.encode("utf-8")
 
     def _encode_bytes(self, raw):
@@ -234,7 +237,7 @@ class ResultCharacteristic(Characteristic):
 
     def _fit_payload_for_ble(self, payload):
         raw = self._json_bytes(payload)
-        if len(raw) <= MAX_GATT_VALUE_BYTES:
+        if len(raw) <= MAX_RESULT_VALUE_BYTES:
             return payload
 
         if isinstance(payload, dict) and isinstance(payload.get("networks"), list):
@@ -247,13 +250,13 @@ class ResultCharacteristic(Characteristic):
                 if candidate["truncated"]:
                     candidate["message"] = "Scan result truncated to fit BLE payload limit"
 
-                if len(self._json_bytes(candidate)) <= MAX_GATT_VALUE_BYTES:
+                if len(self._json_bytes(candidate)) <= MAX_RESULT_VALUE_BYTES:
                     return candidate
 
         return {
             "ok": False,
             "error": "Response too large for BLE payload limit",
-            "max_bytes": MAX_GATT_VALUE_BYTES,
+            "max_bytes": MAX_RESULT_VALUE_BYTES,
         }
 
     def _read_with_offset(self, options):
@@ -334,8 +337,8 @@ class CommandCharacteristic(Characteristic):
 
     @dbus.service.method(GATT_CHRC_IFACE, in_signature="aya{sv}")
     def WriteValue(self, value, options):
-        raw = bytes(value).decode("utf-8", errors="ignore").strip()
-        self.server.process_command(raw)
+        raw_fragment = bytes(value).decode("utf-8", errors="ignore")
+        self.server.process_command_fragment(raw_fragment, options)
 
 
 class ProvisioningGattService(Service):
@@ -377,6 +380,7 @@ class BLEProvisioningServer:
         self._startup_complete = False
         self._startup_error = None
         self._startup_timeout_id = None
+        self._command_buffers = {}
 
     @property
     def wifi(self):
@@ -491,26 +495,126 @@ class BLEProvisioningServer:
 
         return False
 
-    def process_command(self, raw):
-        if not raw:
-            payload = {"ok": False, "error": "Empty command"}
-        else:
-            try:
-                request = json.loads(raw)
-            except json.JSONDecodeError:
-                payload = {"ok": False, "error": "Invalid JSON", "hint": "Write one JSON object"}
-            else:
-                action = request.get("action")
-                if not action:
-                    payload = {"ok": False, "error": "Missing action"}
-                else:
-                    try:
-                        payload = self.processor.handle_action(action, request)
-                    except Exception as exc:
-                        payload = {"ok": False, "action": action, "error": str(exc)}
+    def _client_key(self, options):
+        if not options:
+            return "_default"
 
+        device = options.get("device")
+        if device:
+            return str(device)
+
+        link = options.get("link")
+        if link:
+            return str(link)
+
+        return "_default"
+
+    def _extract_complete_commands(self, buffer):
+        commands = []
+        pending = buffer.replace("\r", "")
+
+        while "\n" in pending:
+            line, pending = pending.split("\n", 1)
+            line = line.strip()
+            if line:
+                commands.append(line)
+
+        tail = pending.strip()
+        if not tail:
+            return commands, ""
+
+        if tail.startswith("{"):
+            try:
+                json.loads(tail)
+            except json.JSONDecodeError:
+                return commands, pending
+
+            commands.append(tail)
+            return commands, ""
+
+        if "{" in tail or "}" in tail:
+            return commands, pending
+
+        commands.append(tail)
+        return commands, ""
+
+    def _parse_compact_command(self, raw):
+        action, has_query_separator, query = raw.partition("?")
+        action = action.strip()
+        if not action:
+            raise ValueError("Missing action")
+
+        payload = {"action": action}
+        if has_query_separator and query:
+            for key, value in parse_qsl(query, keep_blank_values=True):
+                if key == "limit":
+                    try:
+                        payload[key] = int(value)
+                    except ValueError:
+                        payload[key] = value
+                else:
+                    payload[key] = value
+
+        return payload
+
+    def _parse_request(self, raw):
+        command = (raw or "").strip()
+        if not command:
+            raise ValueError("Empty command")
+
+        if command.startswith("{"):
+            return json.loads(command)
+
+        return self._parse_compact_command(command)
+
+    def _publish_payload(self, payload):
         self.service.result_characteristic.set_payload(payload)
         self.service.status_characteristic.bump()
+
+    def process_command_fragment(self, fragment, options):
+        client_key = self._client_key(options)
+        current_buffer = self._command_buffers.get(client_key, "")
+        merged_buffer = current_buffer + (fragment or "")
+
+        if len(merged_buffer.encode("utf-8")) > MAX_COMMAND_BUFFER_BYTES:
+            self._command_buffers.pop(client_key, None)
+            self._publish_payload(
+                {
+                    "ok": False,
+                    "error": "Command payload too large",
+                    "max_bytes": MAX_COMMAND_BUFFER_BYTES,
+                }
+            )
+            return
+
+        commands, remainder = self._extract_complete_commands(merged_buffer)
+        self._command_buffers[client_key] = remainder
+
+        for command in commands:
+            self.process_command(command)
+
+    def process_command(self, raw):
+        try:
+            request = self._parse_request(raw)
+        except json.JSONDecodeError:
+            payload = {
+                "ok": False,
+                "error": "Invalid JSON",
+                "hint": "Write one JSON object (optionally chunked) or compact action like scan_wifi",
+            }
+        except ValueError as exc:
+            payload = {"ok": False, "error": str(exc)}
+        else:
+            action = request.get("action")
+            if not action:
+                payload = {"ok": False, "error": "Missing action"}
+            else:
+                try:
+                    payload = self.processor.handle_action(action, request)
+                except Exception as exc:
+                    payload = {"ok": False, "action": action, "error": str(exc)}
+
+        self._publish_payload(payload)
 
     def start(self):
         if self.auto_configure_adapter:

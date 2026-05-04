@@ -114,7 +114,10 @@ App Flutter kết nối tới thiết bị BLE có tên `khanhpi` rồi dùng 1 
 Flow phía app:
 
 1. Subscribe `status characteristic`
-2. Ghi 1 JSON command UTF-8 vào `command characteristic`
+2. Ghi command vào `command characteristic`:
+	- Nên ưu tiên `write with response`.
+	- Nếu dùng `write without response`, payload mỗi packet phải nhỏ (thường <= 20 bytes khi MTU mặc định).
+	- Với JSON dài, có thể chia nhỏ thành nhiều packet và kết thúc bằng `\n`.
 3. Khi `status characteristic` notify số mới, app đọc `result characteristic`
 4. Parse JSON response và hiển thị danh sách Wi-Fi hoặc trạng thái connect
 
@@ -124,11 +127,19 @@ Ví dụ command để lấy danh sách Wi-Fi:
 {"action":"scan_wifi","limit":12}
 ```
 
+Ví dụ compact command (gọn, phù hợp packet nhỏ):
+
+```text
+scan_wifi?limit=12
+```
+
 Ví dụ command để Pi kết nối Wi-Fi:
 
 ```json
 {"action":"connect_wifi","ssid":"TenWifi","password":"MatKhau"}
 ```
+
+Lưu ý kết quả `scan_wifi` qua BLE có thể được cắt gọn để vừa payload GATT an toàn; khi đó response có các field như `truncated`, `total_networks`, `message`.
 
 ### Chế độ tương thích RFCOMM
 
